@@ -2,6 +2,8 @@
   "extends": ["tslint:recommended", "tslint-config-prettier"],
   "rules": {
     "object-literal-sort-keys":  false,
-    "array-type": false
+    "array-type": false,
+    "no-console": false,
+    "no-var-requires": false
   }
 }

@@ -1,7 +1,7 @@
 import { Transform, TransformCallback, TransformOptions } from 'stream';
 
 
-interface IOptions
+export interface ICSVParserOptions
 {
     // User can define specific header or indicate if first row should be used as header by setting this property to true
     headers?: Array<string> | boolean;
@@ -19,7 +19,7 @@ interface IOptions
     strict?: boolean;
 }
 
-const defaultOptions: IOptions = {
+const defaultOptions: ICSVParserOptions = {
     headers: true,
     escape: '"',
     rowBreak: "\r\n",
@@ -27,19 +27,19 @@ const defaultOptions: IOptions = {
     strict: true
 }
 
-interface ICSVRecord
+export interface ICSVRecord
 {
     [key: string]: string
 }
 
-class CSVParse extends Transform
+export class CSVParser extends Transform
 {
-    private options: IOptions;
+    private options: ICSVParserOptions;
     private leftoverData?: string;
     private headers: Array<string> = [];
     private firstRowParsed = false;
 
-    constructor(parserOptions?: IOptions, streamOptions?: TransformOptions) {
+    constructor(parserOptions?: ICSVParserOptions, streamOptions?: TransformOptions) {
         super(streamOptions);
 
         this.options = { ...defaultOptions, ...parserOptions };
@@ -53,7 +53,7 @@ class CSVParse extends Transform
     // Process row
 
     // Transform function, called when data are available
-    public _transform(chunk: any, encoding: BufferEncoding, callback: TransformCallback): void
+    public _transform(chunk: any, encoding: BufferEncoding, done: TransformCallback): void
     {
         // Type of data we got should be string
         let data = String(chunk);
@@ -63,16 +63,34 @@ class CSVParse extends Transform
           this.leftoverData = "";
         }
 
-        this.processData(data, callback, false);
+        try
+        {
+            this.processData(data, false);
+        }
+        catch(err)
+        {
+            done(err, null);
+            return;
+        }
+        done();
     }
 
     // Transform function, called after all data was delivered (at end of stream)
-    public _flush(callback: TransformCallback): void
+    public _flush(done: TransformCallback): void
     {         
         if (this.leftoverData)
-        {
-            this.processData(this.leftoverData, callback, true);
+        {            
+            try
+            {
+                this.processData(this.leftoverData, true);
+            }
+            catch(err)
+            {
+                done(err, null);
+                return;
+            }
         }
+        done();        
     }
 
     // Check if escape string is not present in break strings, throw exception if it is   
@@ -88,7 +106,7 @@ class CSVParse extends Transform
         }
     }
 
-    private processColumns(colums: Array<string>, callback: TransformCallback): void
+    private processColumns(colums: Array<string>): void
     {
         if (this.options.headers === true && this.firstRowParsed === false)
         {
@@ -103,8 +121,7 @@ class CSVParse extends Transform
             // If strict is enabled we return error instead of data
             if (this.options.strict === true)
             {
-                callback(new Error("Number of colums("+colums.length+") does not match number of headers("+this.headers.length+")!"), null);
-                return;
+                throw new Error("Number of colums("+colums.length+") does not match number of headers("+this.headers.length+")!");
             }
             // Otherwise we add new header names (number or placeholder text)
             else if (colums.length > this.headers.length)
@@ -135,32 +152,34 @@ class CSVParse extends Transform
             obj[this.headers[i]] = colums[i];
         }
 
-        callback(null, obj);
+        this.push(JSON.stringify(obj));
     }
 
-    private processRow(data: string, rowBegin:number, rowEnd:number, callback: TransformCallback): void
+    private processRow(data: string, rowBegin:number, rowEnd:number): void
     {
         let columnBegin = rowBegin;
         // The nested function findNextEscaping can throw exception, but said exception would already be thrown and caught earlier in executed code (processData:findNextRI)
         let columnEnd = this.findNextCI(data, columnBegin);
         const columns: Array<string> = [];
 
-        while(columnEnd !== -1)
+        while(columnEnd !== -1 && columnEnd < rowEnd)
         {
-            columns.push(data.substring(columnBegin + this.options.columnBreak!.length, columnEnd));
+            // First column doesnt start with columnbreak
+            columns.push(data.substring(columnBegin === rowBegin ? columnBegin : columnBegin+this.options.columnBreak!.length, columnEnd));
 
             columnBegin = columnEnd;
             // The nested function findNextEscaping can throw exception, but said exception would already be thrown and caught earlier in executed code (processData:findNextRI)
-            columnEnd = this.findNextCI(data, columnBegin);
+            columnEnd = this.findNextCI(data, columnBegin+this.options.columnBreak!.length);
         }
         
-        columns.push(data.substring(columnBegin + this.options.columnBreak!.length, columnEnd));
+        // Once columns csvs case start at begin not after columnbreak
+        columns.push(data.substring(columnBegin === rowBegin ? columnBegin : columnBegin+this.options.columnBreak!.length, rowEnd));
 
-        this.processColumns(columns, callback);
+        this.processColumns(columns);
     }
 
-    private processData(data: string, callback: TransformCallback, endOfData: boolean): void
-    {
+    private processData(data: string, endOfData: boolean): void
+    {            
         let rowBegin = 0;
         let rowEnd = -1;
         try
@@ -176,18 +195,18 @@ class CSVParse extends Transform
 
         while(rowEnd !== -1)
         {
-            this.processRow(data, rowBegin, rowEnd, callback); 
+            this.processRow(data, rowBegin, rowEnd); 
 
-            rowBegin = rowEnd;
+            rowBegin = rowEnd + this.options.rowBreak!.length;
             
             try
             {
-                this.findNextRI(data, rowBegin);
+                rowEnd = this.findNextRI(data, rowBegin);
             }
             // We did not find end of escaping sequence - more data is needed
             catch(err)
             {
-                this.leftoverData = data.substr(rowBegin + this.options.rowBreak!.length);
+                this.leftoverData = data.substr(rowBegin);
                 return;    
             }
         }
@@ -195,12 +214,12 @@ class CSVParse extends Transform
         // In case this was called from flush, we will say end of row was end of data
         if (endOfData === true)
         {
-            this.processRow(data, rowBegin, data.length - 1, callback); 
+            this.processRow(data, rowBegin, data.length); 
         }
         // Othervise save leftover data for next call
         else
         {
-            this.leftoverData = data.substr(rowBegin + this.options.rowBreak!.length);
+            this.leftoverData = data.substr(rowBegin);
         }
     }
 
@@ -262,5 +281,3 @@ class CSVParse extends Transform
     }
 
 }
-
-export default CSVParse;
