@@ -1,3 +1,4 @@
+/* eslint-disable quotes */
 import {createReadStream, readFileSync, readdirSync} from 'fs';
 import {join} from 'path';
 import {CSVParser, ICSVRecord} from '../index';
@@ -6,10 +7,9 @@ import {CSVParser, ICSVRecord} from '../index';
 
 function testCSV(name: string, parser: CSVParser, done: jest.DoneCallback): void
 {
-    const expectedJSON = JSON.parse(readFileSync(join(__dirname, 'json', name+'.json')).toString());
-    const jsonArray: Array<ICSVRecord> = [];  
-    console.time(name);
-    const rs = createReadStream(join(__dirname, 'csvs', name+'.csv'));
+    const expectedJSON = JSON.parse(readFileSync(join(__dirname, 'data', name+'.json')).toString());
+    const jsonArray: Array<ICSVRecord> = [];
+    const rs = createReadStream(join(__dirname, 'data', name+'.csv'));
     rs
         .on('open', ()=> {
             rs.pipe(parser)
@@ -17,12 +17,10 @@ function testCSV(name: string, parser: CSVParser, done: jest.DoneCallback): void
                     jsonArray.push(JSON.parse(chunk));
                 })
                 .on('error', (err: Error) => {
-                    console.log(err);
                     done(err);
                 })
                 .on('end', () => {
                     expect(jsonArray).toMatchObject(expectedJSON);
-                    console.timeEnd(name);
                     done();
                 });
         })
@@ -32,14 +30,32 @@ function testCSV(name: string, parser: CSVParser, done: jest.DoneCallback): void
         });
 }
 
-readdirSync(join(__dirname, 'csvs')).forEach(file => {
-    const name = file.substr(0, file.length - 4);
+readdirSync(join(__dirname, 'data', 'rfc4180')).forEach(file => {
+    if (file.endsWith(".json"))
+    {
+        return;
+    }
+    const name = 'rfc4180/'+file.substr(0, file.length - 4);
+    test(name, done => {
+        const parser = new CSVParser();
+        testCSV(name, parser, done);
+
+    });
+});
+
+readdirSync(join(__dirname, 'data', 'customized')).forEach(file => {
+    if (file.endsWith(".json"))
+    {
+        return;
+    }
+
+    const name = 'customized/'+file.substr(0, file.length - 4);
     test(name, done => {
         const parser = new CSVParser({
             headers: true,
-            escape: '"',
+            escape: '\'',
             rowBreak: '\n',
-            columnBreak: ',',
+            columnBreak: ';',
             strict: true
         });
         testCSV(name, parser, done);

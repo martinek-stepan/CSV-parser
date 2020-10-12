@@ -24,7 +24,7 @@
             "cwd": "${workspaceRoot}",
             "runtimeExecutable": "npm",
             "runtimeArgs": [
-                "run", "test", "-- --silent=false"
+                "run", "test"
             ],
             "port": 5858
         }
