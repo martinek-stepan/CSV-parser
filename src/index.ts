@@ -48,6 +48,11 @@ export class CSVParser extends Transform
 
         this.options = { ...defaultOptions, ...parserOptions };
 
+        if (Array.isArray(this.options.headers!))
+        {
+            this.headers = this.options.headers!;
+        }
+
         // Check if escape string is not present in break strings, throw exception if it is      
         this.checkOptions();
     }
@@ -104,7 +109,7 @@ export class CSVParser extends Transform
         {
             throw new Error('Column break ['+this.options.columnBreak!+'] can not include, escape string ['+this.options.escape!+']!');
         }
-        if (this.options.columnBreak?.includes(this.options.escape!))
+        if (this.options.rowBreak?.includes(this.options.escape!))
         {
             throw new Error('Row break ['+this.options.rowBreak!+'] can not include, escape string ['+this.options.escape!+']!');
         }
@@ -112,11 +117,22 @@ export class CSVParser extends Transform
 
     private processColumns(colums: Array<string>): void
     {
-        if (this.options.headers === true && this.firstRowParsed === false)
+        if (!Array.isArray(this.options.headers) && this.firstRowParsed === false)
         {
             this.firstRowParsed = true;
-            this.headers = colums;
-            return;
+
+            if (this.options.headers === true)
+            {
+                this.headers = colums;
+                return;
+            }
+            else
+            {
+                for (let i = this.headers.length; i < colums.length; i++)
+                {
+                    this.headers.push(i.toString());
+                }
+            }
         }
 
         // Number of colums we parsed and number of headers we have doesnt match
@@ -181,8 +197,10 @@ export class CSVParser extends Transform
             // TODO escapedescape
             if (delimiterObj.escaped)
             {
-                columnIndex = data.indexOf(this.options.escape! + this.options.columnBreak!, delimiterObj.start);
-                rowIndex = data.indexOf(this.options.escape! + this.options.rowBreak!, delimiterObj.start);
+                columnIndex = this.findEndOfEscaping(data, delimiterObj.start, this.options.columnBreak!);
+                rowIndex = this.findEndOfEscaping(data, delimiterObj.start, this.options.rowBreak!);
+                //columnIndex = data.indexOf(this.options.escape! + this.options.columnBreak!, delimiterObj.start);
+                //rowIndex = data.indexOf(this.options.escape! + this.options.rowBreak!, delimiterObj.start);
             }
             else
             {
@@ -270,25 +288,42 @@ export class CSVParser extends Transform
     // We are looking for end of escaping (", or "\r\n) but only if its not escaped ("". or ""\r\n)
     private findEndOfEscaping(data: string, startIndex: number, delimiter: string) : number
     {
-        const DOUBLE_ESCAPE = this.options.escape!+this.options.escape! + delimiter;
-        const ESCAPE = this.options.escape! + delimiter;
-        let doubleEscaped = data.indexOf(DOUBLE_ESCAPE, startIndex);
-        let escaped = data.indexOf(ESCAPE, startIndex);
-
-        // If we find escaped on same index as double escaped we continue looking (until we cant find either)
-        while (escaped === (doubleEscaped+this.options.escape!.length) && escaped !== -1 && doubleEscaped !== -1)
+        let delimiterIndex: number;
+            
+        do
         {
-            doubleEscaped = data.indexOf(DOUBLE_ESCAPE, doubleEscaped + DOUBLE_ESCAPE.length);
-            escaped = data.indexOf(ESCAPE, escaped+ ESCAPE.length);
-        }
+            delimiterIndex = data.indexOf(this.options.escape! + delimiter, startIndex);
+            if (delimiterIndex === -1)
+            {
+                break;
+            }
 
-        if (escaped !== -1)
-        {
-            return escaped;
+            let count = 0;
+            let index = delimiterIndex;
+            while(index > startIndex)
+            {
+                if (data.startsWith(this.options.escape!, index))
+                {
+                    count++;
+                    index -= this.options.escape!.length;
+                }
+                else
+                {
+                    break;
+                }
+            }
+
+            if (count % 2 === 1)
+            {
+                return delimiterIndex;
+            }
+            else
+            {
+                startIndex = delimiterIndex + this.options.escape!.length + delimiter.length -1;
+            }
         }
-        else
-        {            
-            throw new Error('Not enough data to finish escaping');
-        }
+        while(delimiterIndex !== -1);
+
+        return delimiterIndex;
     }
 }
