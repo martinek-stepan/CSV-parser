@@ -1,9 +1,11 @@
-/* eslint-disable @typescript-eslint/explicit-module-boundary-types */
-/* eslint-disable @typescript-eslint/no-explicit-any */
-/* eslint-disable @typescript-eslint/no-non-null-assertion */
+/**
+ * @author Stepan Martinek <ste.martinek+gh@gmail.com>
+ */
+
 import { Transform, TransformCallback, TransformOptions } from 'stream';
 
 
+// External structure with optional properties used for overriding default config
 export interface ICSVParserOptions
 {
     // User can define specific header or indicate if first row should be used as header by setting this property to true
@@ -22,7 +24,26 @@ export interface ICSVParserOptions
     strict?: boolean;
 }
 
-const defaultOptions: ICSVParserOptions = {
+// Internal structure that doesnt contain optionals, since we are using default config
+interface ICSVParserOptions_
+{
+    // User can define specific header or indicate if first row should be used as header by setting this property to true
+    headers: Array<string> | boolean;
+
+    // Used for override of original escape character (")
+    escape: string;
+    
+    // Used for override of original row break characters (CRLF)
+    rowBreak: string;
+    
+    // Used for override of original column break character (,)
+    columnBreak: string;
+
+    // When true, throw exception when number of columns doesnt match header / first row
+    strict: boolean;
+}
+
+const defaultOptions: ICSVParserOptions_ = {
     headers: true,
     escape: '"',
     rowBreak: '\r\n',
@@ -30,27 +51,58 @@ const defaultOptions: ICSVParserOptions = {
     strict: true
 };
 
+// Helper inferface to compose dynamic key-value object
 export interface ICSVRecord
 {
     [key: string]: string
 }
 
+// Helper inferface for keeping data about start of field
+interface IDelimiterObject
+{
+    start: number,
+    escaped: boolean
+}
+
+
+export class ColumnBreakError extends Error {
+    constructor(columnBreak: string, escape: string) {
+        super('Column break [' + columnBreak + '] can not include, escape string [' + escape + ']!');
+    }
+}
+export class RowBreakError extends Error {
+    constructor(rowBreak: string, escape: string) {
+        super('Row break [' + rowBreak + '] can not include, escape string [' + escape + ']!');
+    }
+}
+
+export class ColumnMissmatchError extends Error {
+    constructor(columnLenght: number, headersLength: number) {
+        super('Number of colums(' + columnLenght + ') does not match number of headers(' + headersLength + ')!');
+    }
+}
+
+
 export class CSVParser extends Transform
 {
-    private options: ICSVParserOptions;
-    private leftoverData?: string;
+    private options: ICSVParserOptions_;
     private headers: Array<string> = [];
+
     private firstRowParsed = false;
+
+    private leftoverData = '';
     private leftoverColumns: Array<string> = [];
 
     constructor(parserOptions?: ICSVParserOptions, streamOptions?: TransformOptions) {
         super(streamOptions);
 
+        // Override default options with given ones
         this.options = { ...defaultOptions, ...parserOptions };
 
-        if (Array.isArray(this.options.headers!))
+        // Use headers from options if available
+        if (Array.isArray(this.options.headers))
         {
-            this.headers = this.options.headers!;
+            this.headers = this.options.headers;
         }
 
         // Check if escape string is not present in break strings, throw exception if it is      
@@ -62,12 +114,13 @@ export class CSVParser extends Transform
     // Process row
 
     // Transform function, called when data are available
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/explicit-module-boundary-types
     public _transform(chunk: any, encoding: BufferEncoding, done: TransformCallback): void
     {
         // Type of data we got should be string
         let data = String(chunk);
         // If we have leftover data from last chunk append new chunk to them
-        if (this.leftoverData) {
+        if (this.leftoverData.length > 0) {
             data = this.leftoverData + data;
             this.leftoverData = '';
         }
@@ -87,7 +140,7 @@ export class CSVParser extends Transform
     // Transform function, called after all data was delivered (at end of stream)
     public _flush(done: TransformCallback): void
     {         
-        if (this.leftoverData)
+        if (this.leftoverData.length > 0)
         {            
             try
             {
@@ -105,27 +158,30 @@ export class CSVParser extends Transform
     // Check if escape string is not present in break strings, throw exception if it is   
     private checkOptions(): void
     {
-        if (this.options.columnBreak?.includes(this.options.escape!))
+        if (this.options.columnBreak.includes(this.options.escape))
         {
-            throw new Error('Column break ['+this.options.columnBreak!+'] can not include, escape string ['+this.options.escape!+']!');
+            throw new ColumnBreakError(this.options.columnBreak, this.options.escape);
         }
-        if (this.options.rowBreak?.includes(this.options.escape!))
+        if (this.options.rowBreak.includes(this.options.escape))
         {
-            throw new Error('Row break ['+this.options.rowBreak!+'] can not include, escape string ['+this.options.escape!+']!');
+            throw new RowBreakError(this.options.rowBreak, this.options.escape);
         }
     }
 
     private processColumns(colums: Array<string>): void
     {
+        // Unless we got column names we will generate them / use them in first row
         if (!Array.isArray(this.options.headers) && this.firstRowParsed === false)
         {
             this.firstRowParsed = true;
 
+            // We got headers in options
             if (this.options.headers === true)
             {
                 this.headers = colums;
                 return;
             }
+            // We generate numbers
             else
             {
                 for (let i = this.headers.length; i < colums.length; i++)
@@ -141,13 +197,14 @@ export class CSVParser extends Transform
             // If strict is enabled we return error instead of data
             if (this.options.strict === true)
             {
-                throw new Error('Number of colums('+colums.length+') does not match number of headers('+this.headers.length+')!');
+                throw new ColumnMissmatchError(colums.length,this.headers.length);
             }
             // Otherwise we add new header names (number or placeholder text)
             else if (colums.length > this.headers.length)
             {
                 for (let i = this.headers.length; i < colums.length; i++)
                 {
+                    // We got some names, but less than number of columns
                     if (this.options.headers !== false)
                     {
                         let name = '___UNKNONW_HEADER_'+i+'___';
@@ -158,6 +215,7 @@ export class CSVParser extends Transform
                         }
                         this.headers.push(name);
                     }
+                    // We created numbers during first row, now we need to add some more
                     else
                     {
                         this.headers.push(i.toString());
@@ -172,15 +230,16 @@ export class CSVParser extends Transform
             obj[this.headers[i]] = colums[i];
         }
 
+        // Publish row object
         this.push(JSON.stringify(obj));
     }
 
     private processData(data: string, endOfData: boolean): void
     {
         // We start at begining
-        let delimiterObj: any = {
+        let delimiterObj: IDelimiterObject | null = {
             start: 0,
-            escaped: data.startsWith(this.options.escape!, 0)
+            escaped: data.startsWith(this.options.escape, 0)
         };
 
         // Use leftover colums
@@ -194,18 +253,15 @@ export class CSVParser extends Transform
         while(delimiterObj !== null)
         {
             // Find end of field sequence based on if field is escaped or not
-            // TODO escapedescape
             if (delimiterObj.escaped)
             {
-                columnIndex = this.findEndOfEscaping(data, delimiterObj.start, this.options.columnBreak!);
-                rowIndex = this.findEndOfEscaping(data, delimiterObj.start, this.options.rowBreak!);
-                //columnIndex = data.indexOf(this.options.escape! + this.options.columnBreak!, delimiterObj.start);
-                //rowIndex = data.indexOf(this.options.escape! + this.options.rowBreak!, delimiterObj.start);
+                columnIndex = this.findEndOfEscaping(data, delimiterObj.start, this.options.columnBreak);
+                rowIndex = this.findEndOfEscaping(data, delimiterObj.start, this.options.rowBreak);
             }
             else
             {
-                columnIndex = data.indexOf(this.options.columnBreak!, delimiterObj.start);
-                rowIndex = data.indexOf(this.options.rowBreak!, delimiterObj.start);
+                columnIndex = data.indexOf(this.options.columnBreak, delimiterObj.start);
+                rowIndex = data.indexOf(this.options.rowBreak, delimiterObj.start);
             }
 
             // Set endIndex and delimiter variables to general approach for end of column and row
@@ -217,14 +273,14 @@ export class CSVParser extends Transform
             if ((columnIndex < rowIndex && columnIndex !== -1) || (columnIndex > 0 && rowIndex === -1))
             {
                 endIndex = columnIndex;
-                delimited = this.options.columnBreak!;
+                delimited = this.options.columnBreak;
                 endOfRow = false;
             }
             // rowIndex was found and smaller than columnIndex
             else if ((rowIndex < columnIndex && rowIndex !== -1) || (rowIndex > 0 && columnIndex === -1))
             {
                 endIndex = rowIndex;
-                delimited = this.options.rowBreak!;
+                delimited = this.options.rowBreak;
                 endOfRow = true;
             }
             // We didnt find either
@@ -243,7 +299,7 @@ export class CSVParser extends Transform
                 else
                 {
                     delimited = '';
-                    endIndex = data.length - (delimiterObj.escaped ? this.options.escape!.length : 0);
+                    endIndex = data.length - (delimiterObj.escaped ? this.options.escape.length : 0);
                     endOfRow = true;
                 }
             }
@@ -254,10 +310,10 @@ export class CSVParser extends Transform
             // If we have next end create new delimiter object
             if (columnIndex !== rowIndex)
             {
-                const newStart = endIndex + (delimiterObj.escaped ? this.options.escape!.length : 0) + delimited.length;
+                const newStart: number = endIndex + (delimiterObj.escaped ? this.options.escape.length : 0) + delimited.length;
                 delimiterObj = {
                     start: newStart,
-                    escaped: data.startsWith(this.options.escape!, newStart) 
+                    escaped: data.startsWith(this.options.escape, newStart) 
                 };
             }
             // Otherwise set it to null to break the cycle
@@ -275,13 +331,14 @@ export class CSVParser extends Transform
         }
     }
 
-    private extractField(data: string, delimiterObj: any, endIndex:number): string
+    // Determine start index based on escaping and remove double escaping
+    private extractField(data: string, delimiterObj: IDelimiterObject, endIndex:number): string
     {
-        const startIndex = delimiterObj.start + (delimiterObj.escaped ? this.options.escape!.length : 0);
+        const startIndex = delimiterObj.start + (delimiterObj.escaped ? this.options.escape.length : 0);
         const field = data.substring(startIndex, endIndex);
         
         // TODO figure why replaceAll doesnt work
-        return field.split(this.options.escape! + this.options.escape!).join(this.options.escape!);
+        return field.split(this.options.escape + this.options.escape).join(this.options.escape);
     }
 
 
@@ -290,9 +347,11 @@ export class CSVParser extends Transform
     {
         let delimiterIndex: number;
             
+        // Look for unding untill we run out of data
         do
         {
-            delimiterIndex = data.indexOf(this.options.escape! + delimiter, startIndex);
+            delimiterIndex = data.indexOf(this.options.escape + delimiter, startIndex);
+            // If we run out of data break cycle
             if (delimiterIndex === -1)
             {
                 break;
@@ -300,26 +359,33 @@ export class CSVParser extends Transform
 
             let count = 0;
             let index = delimiterIndex;
+            // We found escaped ending
+            // Step back the data by escaping sequence and count them
             while(index > startIndex)
             {
-                if (data.startsWith(this.options.escape!, index))
+                // We found another escape sequence
+                if (data.startsWith(this.options.escape, index))
                 {
                     count++;
-                    index -= this.options.escape!.length;
+                    // Move back one more step
+                    index -= this.options.escape.length;
                 }
+                // We did not found escaping sequence -> break the cycle
                 else
                 {
                     break;
                 }
             }
 
+            // If number of escaping sequences found is odd we found end of field
             if (count % 2 === 1)
             {
                 return delimiterIndex;
             }
+            // If number of escaping sequences found is even, the ending we found was it-self escaped and we need to continoue looking futher
             else
             {
-                startIndex = delimiterIndex + this.options.escape!.length + delimiter.length -1;
+                startIndex = delimiterIndex + this.options.escape.length + delimiter.length - 1;
             }
         }
         while(delimiterIndex !== -1);

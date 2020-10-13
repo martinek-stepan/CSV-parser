@@ -1,6 +1,10 @@
+/**
+ * @author Stepan Martinek <ste.martinek+gh@gmail.com>
+ */
+
 import {createReadStream, readFileSync, readdirSync} from 'fs';
 import {join} from 'path';
-import {CSVParser, ICSVRecord} from '../index';
+import {ColumnBreakError, ColumnMissmatchError, CSVParser, ICSVRecord, RowBreakError} from '../index';
 import {Readable} from 'stream';
 
 
@@ -70,7 +74,7 @@ test('invalid parser options', () =>
             escape: 'x',
             rowBreak: 'xy'
         });
-    }).toThrow(Error);
+    }).toThrowError(RowBreakError);
 
     
     expect(() => {
@@ -78,7 +82,7 @@ test('invalid parser options', () =>
             escape: 'x',
             columnBreak: 'xy'
         });
-    }).toThrow(Error);
+    }).toThrowError(ColumnBreakError);
 });
 
 test('transform data leftover', done =>
@@ -169,7 +173,7 @@ test('missing columns duplicate name', done =>
 });
 
 
-test('no heeaders', done =>
+test('no headers', done =>
 {
     const parser = new CSVParser({
         headers: false,
@@ -218,7 +222,7 @@ test('strict header colums misscount end', done =>
             jsonArray.push(JSON.parse(chunk));
         })
         .on('error', (err: Error) => {
-            expect(err).toBeInstanceOf(Error);
+            expect(err).toBeInstanceOf(ColumnMissmatchError);
             done();
         })
         .on('end', () => {
@@ -232,7 +236,7 @@ test('strict header colums misscount end', done =>
 });
 
 
-test('strict header colums misscount more headers', done =>
+test('header colums misscount more headers', done =>
 {
     const parser = new CSVParser({
         headers: ['1','2','3'],
@@ -261,7 +265,7 @@ test('strict header colums misscount more headers', done =>
     rs.destroy();
 });
 
-test('strict header colums misscount middle', done =>
+test('strict header colums misscount next row', done =>
 {
     const parser = new CSVParser({
         headers: ['1'],
@@ -274,7 +278,7 @@ test('strict header colums misscount middle', done =>
             jsonArray.push(JSON.parse(chunk));
         })
         .on('error', (err: Error) => {
-            expect(err).toBeInstanceOf(Error);
+            expect(err).toBeInstanceOf(ColumnMissmatchError);
             done();
         })
         .on('end', () => {

@@ -1,19 +1,12 @@
 {
-  "name": "csv-parser-challenge",
+  "name": "stream-csv-parser",
   "version": "0.0.1",
-  "description": "Simple CSV parser made for coding challenge",
+  "description": "Simple CSV parser made for coding challenge utilizing node steams",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
   "scripts": {
     "test": "jest --config jestconfig.json",
-    "build": "tsc",
-    "format": "prettier --write \"src/**/*.ts\" \"src/**/*.js\"",
-    "lint": "tslint -p tsconfig.json",
-    "prepare": "npm run build",
-    "prepublishOnly": "npm test && npm run lint",
-    "preversion": "npm run lint",
-    "version": "npm run format && git add -A src",
-    "postversion": "git push && git push --tags"
+    "build": "tsc"
   },
   "repository": {
     "type": "git",
